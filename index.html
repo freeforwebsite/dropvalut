@@ -132,6 +132,10 @@
 
       <!-- CREATE FLOW -->
       <div id="createForm">
+        <label>Choose your room ID (6 digits)</label>
+        <input type="text" id="createRoomIdInput" inputmode="numeric" maxlength="6" placeholder="000000" style="font-size:28px;letter-spacing:6px;">
+        <div class="hint" id="createIdHint">Pick any 6-digit number, or <span id="shuffleIdBtn" style="color:var(--cyan);text-decoration:underline;cursor:pointer;">shuffle one</span>. Then set a password below:</div>
+
         <div class="method-tabs">
           <div class="method-tab active" id="createMethodPin">4-digit PIN</div>
           <div class="method-tab" id="createMethodPattern">Pattern</div>
@@ -197,13 +201,29 @@
 
 <script>
 /* ================= CONFIGURE THESE ================= */
-const SUPABASE_URL = "https://qrsufugtqumciqhceqdk.supabase.co";
+const SUPABASE_URL = "https://qrsufugtqumciqhceqdk.sb.co";
 const SUPABASE_ANON_KEY = "sb_publishable_0DMhS_QIM1cH8z8HsnBuVA_lyWv27MX";
 const BUCKET = "dropvault-files";
 /* ===================================================== */
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
+
+function fatalError(msg){
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#3a1220;color:#ffb3bd;padding:12px 16px;font-size:13px;text-align:center;z-index:999;border-bottom:1px solid #ff6b7d;';
+  banner.textContent = msg;
+  document.body.prepend(banner);
+}
+
+let sb;
+try{
+  if(!window.supabase) throw new Error('Supabase library did not load (check network/adblock)');
+  if(SUPABASE_URL.includes('YOUR_SUPABASE')) throw new Error('Supabase URL/key not configured');
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}catch(e){
+  fatalError('Setup error: ' + e.message + ' — the app cannot connect yet.');
+  console.error(e);
+}
 
 let currentRoom = null;
 let currentPassHash = null;
@@ -369,7 +389,16 @@ function buildPatternGrid(container, onComplete){
 let createMethod = 'pin';
 let createFirstEntry = null; // stores first PIN/pattern for confirm step
 
+function suggestRoomId(){
+  $('createRoomIdInput').value = genRoomCode();
+}
+$('shuffleIdBtn').onclick = suggestRoomId;
+$('createRoomIdInput').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0,6);
+});
+
 function resetCreateFlow(){
+  if(!$('createRoomIdInput').value) suggestRoomId();
   createFirstEntry = null;
   $('createStepLabel').textContent = createMethod === 'pin' ? 'Set a 4-digit PIN' : 'Draw a pattern (4+ dots)';
   $('createRestartBtn').classList.add('hidden');
@@ -416,49 +445,4 @@ function initCreatePattern(){
       if(val !== createFirstEntry){
         $('gateErr').textContent = "Patterns didn't match. Try again.";
         createFirstEntry = null;
-        $('createStepLabel').textContent = 'Draw a pattern (4+ dots)';
-        $('createRestartBtn').classList.add('hidden');
-        clear();
-        return;
-      }
-      await finalizeRoomCreation(val);
-    }
-  });
-}
-
-async function finalizeRoomCreation(secret){
-  $('gateErr').textContent = '';
-  try{
-    const code = genRoomCode();
-    const hash = await sha256(secret);
-    const { error } = await supabase.from('rooms').insert({ id: code, password_hash: hash, method: createMethod });
-    if(error) throw error;
-    enterRoom(code, hash);
-  }catch(e){
-    $('gateErr').textContent = 'Could not create room. ' + (e.message||'');
-    resetCreateFlow();
-  }
-}
-
-$('createMethodPin').onclick = () => {
-  createMethod = 'pin';
-  $('createMethodPin').classList.add('active');
-  $('createMethodPattern').classList.remove('active');
-  resetCreateFlow();
-};
-$('createMethodPattern').onclick = () => {
-  createMethod = 'pattern';
-  $('createMethodPattern').classList.add('active');
-  $('createMethodPin').classList.remove('active');
-  resetCreateFlow();
-};
-$('createRestartBtn').onclick = resetCreateFlow;
-
-/* ============ JOIN ROOM FLOW ============ */
-let joinRoomCode = null;
-let joinRoomHash = null;
-let joinRoomMethod = null;
-
-$('joinCodeBtn').onclick = async () => {
-  const code = $('joinCode').value.trim();
-  if(!/^\d{6}$/.test(code)){ $('gateErr').textContent = 'Ente
+        $('createSt
