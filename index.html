@@ -215,11 +215,11 @@ function fatalError(msg){
   document.body.prepend(banner);
 }
 
-let sb;
+let supabase;
 try{
   if(!window.supabase) throw new Error('Supabase library did not load (check network/adblock)');
   if(SUPABASE_URL.includes('YOUR_SUPABASE')) throw new Error('Supabase URL/key not configured');
-  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }catch(e){
   fatalError('Setup error: ' + e.message + ' — the app cannot connect yet.');
   console.error(e);
@@ -445,4 +445,231 @@ function initCreatePattern(){
       if(val !== createFirstEntry){
         $('gateErr').textContent = "Patterns didn't match. Try again.";
         createFirstEntry = null;
-        $('createSt
+        $('createStepLabel').textContent = 'Draw a pattern (4+ dots)';
+        $('createRestartBtn').classList.add('hidden');
+        clear();
+        return;
+      }
+      await finalizeRoomCreation(val);
+    }
+  });
+}
+
+async function finalizeRoomCreation(secret){
+  $('gateErr').textContent = '';
+  try{
+    const code = genRoomCode();
+    const hash = await sha256(secret);
+    const { error } = await supabase.from('rooms').insert({ id: code, password_hash: hash, method: createMethod });
+    if(error) throw error;
+    enterRoom(code, hash);
+  }catch(e){
+    $('gateErr').textContent = 'Could not create room. ' + (e.message||'');
+    resetCreateFlow();
+  }
+}
+
+$('createMethodPin').onclick = () => {
+  createMethod = 'pin';
+  $('createMethodPin').classList.add('active');
+  $('createMethodPattern').classList.remove('active');
+  resetCreateFlow();
+};
+$('createMethodPattern').onclick = () => {
+  createMethod = 'pattern';
+  $('createMethodPattern').classList.add('active');
+  $('createMethodPin').classList.remove('active');
+  resetCreateFlow();
+};
+$('createRestartBtn').onclick = resetCreateFlow;
+
+/* ============ JOIN ROOM FLOW ============ */
+let joinRoomCode = null;
+let joinRoomHash = null;
+let joinRoomMethod = null;
+
+$('joinCodeBtn').onclick = async () => {
+  const code = $('joinCode').value.trim();
+  if(!/^\d{6}$/.test(code)){ $('gateErr').textContent = 'Enter the 6-digit code.'; return; }
+  $('gateErr').textContent = '';
+  $('joinCodeBtn').disabled = true;
+  try{
+    const { data, error } = await supabase.from('rooms').select('*').eq('id', code).single();
+    if(error || !data){ $('gateErr').textContent = 'Room not found.'; return; }
+    joinRoomCode = code;
+    joinRoomHash = data.password_hash;
+    joinRoomMethod = data.method || 'pin';
+    $('joinCodeStep').classList.add('hidden');
+    $('joinPassStep').classList.remove('hidden');
+    $('joinStepLabel').textContent = joinRoomMethod === 'pin' ? 'Enter the 4-digit PIN' : 'Draw the pattern';
+    if(joinRoomMethod === 'pin'){
+      $('joinPinBlock').classList.remove('hidden');
+      $('joinPatternBlock').classList.add('hidden');
+      buildKeypad($('joinKeypad'), $('joinPinDots'), 4, async (val, clear) => {
+        await tryJoinPassword(val, clear);
+      });
+    } else {
+      $('joinPatternBlock').classList.remove('hidden');
+      $('joinPinBlock').classList.add('hidden');
+      buildPatternGrid($('joinPatternGrid'), async (val, clear) => {
+        await tryJoinPassword(val, clear);
+      });
+    }
+  }catch(e){
+    $('gateErr').textContent = 'Something went wrong.';
+  }finally{
+    $('joinCodeBtn').disabled = false;
+  }
+};
+
+async function tryJoinPassword(secret, clear){
+  const hash = await sha256(secret);
+  if(hash === joinRoomHash){
+    enterRoom(joinRoomCode, hash);
+  } else {
+    $('gateErr').textContent = 'Incorrect. Try again.';
+    clear();
+  }
+}
+
+$('joinBackBtn').onclick = () => {
+  $('joinPassStep').classList.add('hidden');
+  $('joinCodeStep').classList.remove('hidden');
+  $('gateErr').textContent = '';
+};
+
+/* ---- tabs (create vs join) ---- */
+$('tabCreate').onclick = () => {
+  $('tabCreate').classList.add('active'); $('tabJoin').classList.remove('active');
+  $('createForm').style.display='block'; $('joinForm').style.display='none';
+  $('gateErr').textContent='';
+};
+$('tabJoin').onclick = () => {
+  $('tabJoin').classList.add('active'); $('tabCreate').classList.remove('active');
+  $('joinForm').style.display='block'; $('createForm').style.display='none';
+  $('gateErr').textContent='';
+};
+
+/* ============ ROOM ============ */
+function enterRoom(code, hash){
+  currentRoom = code; currentPassHash = hash;
+  sessionStorage.setItem('dv_room', code);
+  sessionStorage.setItem('dv_hash', hash);
+  $('gate').style.display='none';
+  $('room').style.display='flex';
+  $('roomCodeLabel').textContent = code;
+  loadFeed();
+  subscribeFeed();
+}
+
+$('leaveBtn').onclick = () => {
+  sessionStorage.removeItem('dv_room');
+  sessionStorage.removeItem('dv_hash');
+  if(channel) supabase.removeChannel(channel);
+  location.reload();
+};
+
+window.addEventListener('load', () => {
+  const r = sessionStorage.getItem('dv_room');
+  const h = sessionStorage.getItem('dv_hash');
+  if(r && h){ enterRoom(r, h); }
+  else { resetCreateFlow(); }
+});
+
+/* ---- file selection ---- */
+let pendingFile = null;
+$('fileTrigger').onclick = () => $('fileInput').click();
+$('fileInput').onchange = (e) => {
+  pendingFile = e.target.files[0] || null;
+  $('fileName').style.display = pendingFile ? 'block' : 'none';
+  $('fileName').textContent = pendingFile ? ('Attached: ' + pendingFile.name) : '';
+};
+
+/* ---- send ---- */
+$('sendBtn').onclick = async () => {
+  const text = $('textInput').value.trim();
+  if(!text && !pendingFile){ toast('Nothing to send'); return; }
+  $('sendBtn').disabled = true;
+  try{
+    if(pendingFile){
+      const path = `${currentRoom}/${Date.now()}_${pendingFile.name}`;
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, pendingFile);
+      if(upErr) throw upErr;
+      await supabase.from('items').insert({
+        room_id: currentRoom, type: 'file',
+        file_path: path, file_name: pendingFile.name, file_size: pendingFile.size,
+        content: text || null
+      });
+      pendingFile = null; $('fileInput').value=''; $('fileName').style.display='none';
+    } else {
+      await supabase.from('items').insert({ room_id: currentRoom, type: 'text', content: text });
+    }
+    $('textInput').value = '';
+  }catch(e){
+    toast('Send failed: ' + (e.message||'error'));
+  }finally{
+    $('sendBtn').disabled = false;
+  }
+};
+
+/* ---- feed ---- */
+function fmtSize(bytes){
+  if(bytes < 1024) return bytes + ' B';
+  if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+function fmtTime(ts){
+  const d = new Date(ts);
+  return d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+function escapeHtml(s){
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+}
+function renderItem(item){
+  const wrap = document.createElement('div');
+  if(item.type === 'file'){
+    wrap.className = 'glass item file';
+    const url = supabase.storage.from(BUCKET).getPublicUrl(item.file_path).data.publicUrl;
+    wrap.innerHTML = `
+      <div class="file-icon">📄</div>
+      <div class="file-info">
+        <div class="meta"><span>${fmtTime(item.created_at)}</span></div>
+        <div class="fname">${item.file_name}</div>
+        <div class="fsize">${fmtSize(item.file_size||0)}</div>
+      </div>
+      <a class="dl" href="${url}" target="_blank" rel="noopener">Download</a>
+    `;
+  } else {
+    wrap.className = 'glass item text';
+    wrap.innerHTML = `<div class="meta"><span>${fmtTime(item.created_at)}</span></div>${escapeHtml(item.content)}`;
+  }
+  return wrap;
+}
+
+async function loadFeed(){
+  const { data, error } = await supabase
+    .from('items').select('*').eq('room_id', currentRoom)
+    .order('created_at', { ascending: false });
+  const feed = $('feed');
+  feed.innerHTML = '';
+  if(error || !data || data.length === 0){
+    feed.innerHTML = '<div class="empty">Nothing shared yet. Send some text or a file above.</div>';
+    return;
+  }
+  data.forEach(item => feed.appendChild(renderItem(item)));
+}
+
+function subscribeFeed(){
+  channel = supabase.channel('room-' + currentRoom)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'items', filter: `room_id=eq.${currentRoom}` },
+      payload => {
+        const feed = $('feed');
+        const empty = feed.querySelector('.empty');
+        if(empty) empty.remove();
+        feed.prepend(renderItem(payload.new));
+      })
+    .subscribe();
+}
+</script>
+</body>
+</html>
