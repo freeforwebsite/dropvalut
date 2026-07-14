@@ -635,6 +635,7 @@ $('sendBtn').onclick = async () => {
       if(insertErr) throw insertErr;
     }
     $('textInput').value = '';
+    loadFeed();
   }catch(e){
     toast('Send failed: ' + (e.message||'error'));
   }finally{
