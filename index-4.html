@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DropVault — Share text & files anywhere</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#0a0b10;
+    --glass:rgba(255,255,255,0.055);
+    --glass-border:rgba(255,255,255,0.10);
+    --violet:#8b6bff;
+    --cyan:#22e6c8;
+    --text:#eef0f7;
+    --muted:#9298ad;
+    --danger:#ff6b7d;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    min-height:100vh;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    overflow-x:hidden;
+    position:relative;
+  }
+  .blob{position:fixed;border-radius:50%;filter:blur(90px);opacity:.35;z-index:0;animation:float 18s ease-in-out infinite;}
+  .blob1{width:420px;height:420px;background:var(--violet);top:-120px;left:-100px;}
+  .blob2{width:380px;height:380px;background:var(--cyan);bottom:-140px;right:-100px;animation-delay:-6s;}
+  .blob3{width:280px;height:280px;background:#ff6bcb;top:40%;left:60%;animation-delay:-12s;opacity:.2;}
+  @keyframes float{0%,100%{transform:translate(0,0) scale(1);}50%{transform:translate(40px,-30px) scale(1.08);}}
+  .wrap{position:relative;z-index:1;max-width:520px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;padding:20px 16px 40px;}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:22px;}
+  .brand .mark{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--violet),var(--cyan));display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:#0a0b10;}
+  .brand .name{font-weight:700;font-size:18px;letter-spacing:.2px;}
+  .brand .name span{color:var(--cyan);}
+  .glass{background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:20px;}
+
+  /* --- gate screen --- */
+  #gate{flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;}
+  .gate-card{padding:26px 22px;}
+  .tabs{display:flex;gap:8px;margin-bottom:18px;}
+  .tab{flex:1;text-align:center;padding:10px;border-radius:12px;color:var(--muted);font-weight:600;font-size:14px;cursor:pointer;transition:.2s;}
+  .tab.active{background:linear-gradient(135deg,rgba(139,107,255,.25),rgba(34,230,200,.2));color:var(--text);border:1px solid var(--glass-border);}
+  label{font-size:12px;color:var(--muted);display:block;margin:12px 0 6px;letter-spacing:.3px;text-transform:uppercase;text-align:center;}
+  input[type=text]{width:100%;padding:13px 14px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--glass-border);color:var(--text);font-size:20px;letter-spacing:6px;text-align:center;outline:none;transition:border .2s;}
+  input:focus{border-color:var(--violet);}
+  .btn{margin-top:18px;width:100%;padding:13px;border:none;border-radius:12px;background:linear-gradient(135deg,var(--violet),var(--cyan));color:#0a0b10;font-weight:700;font-size:15px;cursor:pointer;transition:transform .15s, opacity .15s;}
+  .btn:active{transform:scale(.98);}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .btn.ghost{background:rgba(255,255,255,.06);color:var(--text);border:1px solid var(--glass-border);}
+  .hint{font-size:12px;color:var(--muted);margin-top:10px;text-align:center;}
+  .err{color:var(--danger);font-size:13px;margin-top:10px;min-height:16px;text-align:center;}
+  .step-label{text-align:center;font-size:13px;color:var(--muted);margin-bottom:4px;}
+
+  /* method sub-tabs */
+  .method-tabs{display:flex;gap:8px;margin:14px 0 6px;}
+  .method-tab{flex:1;text-align:center;padding:8px;border-radius:10px;font-size:12.5px;font-weight:600;color:var(--muted);border:1px solid var(--glass-border);cursor:pointer;}
+  .method-tab.active{color:var(--text);border-color:var(--violet);background:rgba(139,107,255,.15);}
+
+  /* PIN dots + keypad */
+  .pin-dots{display:flex;justify-content:center;gap:14px;margin:18px 0;}
+  .pin-dots .dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--glass-border);transition:.15s;}
+  .pin-dots .dot.filled{background:linear-gradient(135deg,var(--violet),var(--cyan));border-color:transparent;}
+  .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:260px;margin:0 auto;}
+  .key{aspect-ratio:1;border-radius:50%;background:rgba(255,255,255,.05);border:1px solid var(--glass-border);color:var(--text);font-size:20px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.12s;}
+  .key:active{background:rgba(139,107,255,.3);transform:scale(.95);}
+  .key.wide{font-size:13px;}
+
+  /* Pattern grid */
+  .pattern-wrap{display:flex;justify-content:center;margin:18px 0;}
+  .pattern-grid{position:relative;width:240px;height:240px;}
+  svg.pattern-lines{position:absolute;top:0;left:0;pointer-events:none;}
+  .pdot{position:absolute;width:60px;height:60px;display:flex;align-items:center;justify-content:center;}
+  .pdot .core{width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,.15);border:2px solid var(--glass-border);transition:.15s;}
+  .pdot.active .core{background:linear-gradient(135deg,var(--violet),var(--cyan));border-color:transparent;box-shadow:0 0 12px rgba(139,107,255,.6);}
+
+  /* --- room screen --- */
+  #room{display:none;flex:1;flex-direction:column;}
+  .room-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;margin-bottom:14px;}
+  .room-code{display:flex;align-items:center;gap:10px;}
+  .pulse{width:9px;height:9px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 0 rgba(34,230,200,.6);animation:pulse 2s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,230,200,.5);}70%{box-shadow:0 0 0 8px rgba(34,230,200,0);}100%{box-shadow:0 0 0 0 rgba(34,230,200,0);}}
+  .room-code b{font-size:18px;letter-spacing:2px;}
+  .leave{color:var(--muted);font-size:13px;cursor:pointer;text-decoration:underline;}
+
+  .composer{padding:14px;margin-bottom:14px;}
+  textarea{width:100%;min-height:64px;resize:vertical;background:rgba(255,255,255,.04);border:1px solid var(--glass-border);border-radius:12px;color:var(--text);padding:12px;font-size:14px;outline:none;font-family:inherit;letter-spacing:normal;text-align:left;}
+  textarea:focus{border-color:var(--violet);}
+  .composer-row{display:flex;gap:8px;margin-top:10px;align-items:center;}
+  .file-btn{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;flex-shrink:0;background:rgba(255,255,255,.05);border:1px solid var(--glass-border);cursor:pointer;font-size:18px;}
+  .send-btn{flex:1;padding:12px;border:none;border-radius:12px;background:linear-gradient(135deg,var(--violet),var(--cyan));color:#0a0b10;font-weight:700;cursor:pointer;}
+  .send-btn:disabled{opacity:.5;}
+  #fileInput{display:none;}
+  #fileName{font-size:12px;color:var(--cyan);margin-top:6px;display:none;}
+
+  .feed{flex:1;display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding:2px 2px 20px;}
+  .item{padding:14px;border-radius:16px;font-size:14px;line-height:1.5;word-break:break-word;}
+  .item .meta{font-size:11px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;}
+  .item.text{white-space:pre-wrap;}
+  .item.file{display:flex;align-items:center;gap:12px;}
+  .file-icon{width:38px;height:38px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,var(--violet),var(--cyan));display:flex;align-items:center;justify-content:center;font-size:16px;color:#0a0b10;}
+  .file-info{flex:1;min-width:0;}
+  .file-info .fname{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .file-info .fsize{font-size:11.5px;color:var(--muted);}
+  .dl{color:var(--cyan);font-size:12.5px;font-weight:700;text-decoration:none;border:1px solid rgba(34,230,200,.35);padding:6px 10px;border-radius:8px;flex-shrink:0;}
+  .empty{text-align:center;color:var(--muted);font-size:13px;padding:40px 10px;}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(20,22,30,.95);border:1px solid var(--glass-border);padding:10px 18px;border-radius:12px;font-size:13px;z-index:50;opacity:0;transition:opacity .3s;pointer-events:none;}
+  .toast.show{opacity:1;}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div class="blob blob1"></div>
+<div class="blob blob2"></div>
+<div class="blob blob3"></div>
+
+<div class="wrap">
+  <div class="brand">
+    <div class="mark">D</div>
+    <div class="name">Drop<span>Vault</span></div>
+  </div>
+
+  <!-- GATE -->
+  <div id="gate">
+    <div class="glass gate-card">
+      <div class="tabs">
+        <div class="tab active" id="tabCreate">Create room</div>
+        <div class="tab" id="tabJoin">Join room</div>
+      </div>
+
+      <!-- CREATE FLOW -->
+      <div id="createForm">
+        <div class="method-tabs">
+          <div class="method-tab active" id="createMethodPin">4-digit PIN</div>
+          <div class="method-tab" id="createMethodPattern">Pattern</div>
+        </div>
+        <div class="step-label" id="createStepLabel">Set a 4-digit PIN</div>
+
+        <div id="createPinBlock">
+          <div class="pin-dots" id="createPinDots"></div>
+          <div class="keypad" id="createKeypad"></div>
+        </div>
+        <div id="createPatternBlock" class="hidden">
+          <div class="pattern-wrap"><div class="pattern-grid" id="createPatternGrid"></div></div>
+        </div>
+        <button class="btn ghost hidden" id="createRestartBtn">Start over</button>
+      </div>
+
+      <!-- JOIN FLOW -->
+      <div id="joinForm" style="display:none;">
+        <div id="joinCodeStep">
+          <label>6-digit room code</label>
+          <input type="text" id="joinCode" inputmode="numeric" maxlength="6" placeholder="000000">
+          <button class="btn" id="joinCodeBtn">Continue</button>
+        </div>
+        <div id="joinPassStep" class="hidden">
+          <div class="step-label" id="joinStepLabel">Enter password</div>
+          <div id="joinPinBlock" class="hidden">
+            <div class="pin-dots" id="joinPinDots"></div>
+            <div class="keypad" id="joinKeypad"></div>
+          </div>
+          <div id="joinPatternBlock" class="hidden">
+            <div class="pattern-wrap"><div class="pattern-grid" id="joinPatternGrid"></div></div>
+          </div>
+          <button class="btn ghost" id="joinBackBtn">Back to code</button>
+        </div>
+      </div>
+
+      <div class="err" id="gateErr"></div>
+    </div>
+  </div>
+
+  <!-- ROOM -->
+  <div id="room">
+    <div class="glass room-header">
+      <div class="room-code"><span class="pulse"></span><b id="roomCodeLabel"></b></div>
+      <span class="leave" id="leaveBtn">Leave</span>
+    </div>
+
+    <div class="glass composer">
+      <textarea id="textInput" placeholder="Type text to share..."></textarea>
+      <div class="composer-row">
+        <div class="file-btn" id="fileTrigger" title="Attach file">📎</div>
+        <button class="send-btn" id="sendBtn">Send</button>
+      </div>
+      <div id="fileName"></div>
+      <input type="file" id="fileInput">
+    </div>
+
+    <div class="feed" id="feed"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================= CONFIGURE THESE ================= */
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+const BUCKET = "dropvault-files";
+/* ===================================================== */
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = (id) => document.getElementById(id);
+
+let currentRoom = null;
+let currentPassHash = null;
+let channel = null;
+
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+async function sha256(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function genRoomCode(){
+  return String(Math.floor(100000 + Math.random()*900000)); // 6-digit numeric
+}
+
+/* ============ Keypad component ============ */
+function buildKeypad(container, dotsContainer, length, onComplete){
+  container.innerHTML = '';
+  dotsContainer.innerHTML = '';
+  let value = '';
+  const dots = [];
+  for(let i=0;i<length;i++){
+    const d = document.createElement('div');
+    d.className = 'dot';
+    dotsContainer.appendChild(d);
+    dots.push(d);
+  }
+  function refreshDots(){
+    dots.forEach((d,i)=> d.classList.toggle('filled', i < value.length));
+  }
+  function addDigit(n){
+    if(value.length >= length) return;
+    value += n;
+    refreshDots();
+    if(value.length === length){
+      const finalVal = value;
+      setTimeout(()=>{ onComplete(finalVal, ()=>{ value=''; refreshDots(); }); }, 150);
+    }
+  }
+  const layout = ['1','2','3','4','5','6','7','8','9','⌫','0','⏎'];
+  layout.forEach(k=>{
+    const btn = document.createElement('div');
+    btn.className = 'key' + (k==='⌫'||k==='⏎' ? ' wide':'');
+    btn.textContent = k;
+    btn.onclick = () => {
+      if(k === '⌫'){ value = value.slice(0,-1); refreshDots(); }
+      else if(k === '⏎'){ /* no-op, auto-submits at length */ }
+      else addDigit(k);
+    };
+    container.appendChild(btn);
+  });
+  return { reset: ()=>{ value=''; refreshDots(); } };
+}
+
+/* ============ Pattern lock component ============ */
+function buildPatternGrid(container, onComplete){
+  container.innerHTML = '';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','pattern-lines');
+  svg.setAttribute('width','240'); svg.setAttribute('height','240');
+  container.appendChild(svg);
+
+  const positions = [];
+  const dotsEls = [];
+  for(let row=0; row<3; row++){
+    for(let col=0; col<3; col++){
+      const idx = row*3+col;
+      const el = document.createElement('div');
+      el.className = 'pdot';
+      el.style.left = (col*90) + 'px';
+      el.style.top = (row*90) + 'px';
+      el.innerHTML = '<div class="core"></div>';
+      container.appendChild(el);
+      dotsEls.push(el);
+      positions.push({x: col*90+30, y: row*90+30});
+    }
+  }
+
+  let path = [];
+  let dragging = false;
+  let lineEls = [];
+
+  function pointFromEvent(e){
+    const rect = container.getBoundingClientRect();
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    return {x: cx, y: cy};
+  }
+  function nearestDot(pt){
+    for(let i=0;i<positions.length;i++){
+      const dx = positions[i].x - pt.x, dy = positions[i].y - pt.y;
+      if(Math.sqrt(dx*dx+dy*dy) < 28) return i;
+    }
+    return -1;
+  }
+  function drawLine(){
+    svg.innerHTML = '';
+    for(let i=0;i<path.length-1;i++){
+      const a = positions[path[i]], b = positions[path[i+1]];
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',a.x); line.setAttribute('y1',a.y);
+      line.setAttribute('x2',b.x); line.setAttribute('y2',b.y);
+      line.setAttribute('stroke','url(#grad)');
+      line.setAttribute('stroke-width','4');
+      line.setAttribute('stroke-linecap','round');
+      svg.appendChild(line);
+    }
+    const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+    defs.innerHTML = '<linearGradient id="grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b6bff"/><stop offset="1" stop-color="#22e6c8"/></linearGradient>';
+    svg.appendChild(defs);
+  }
+  function reset(){
+    path = [];
+    dotsEls.forEach(d=>d.classList.remove('active'));
+    svg.innerHTML = '';
+  }
+  function start(e){
+    dragging = true;
+    const pt = pointFromEvent(e);
+    const idx = nearestDot(pt);
+    if(idx>=0){ path=[idx]; dotsEls[idx].classList.add('active'); }
+    e.preventDefault();
+  }
+  function move(e){
+    if(!dragging) return;
+    const pt = pointFromEvent(e);
+    const idx = nearestDot(pt);
+    if(idx>=0 && !path.includes(idx)){
+      path.push(idx);
+      dotsEls[idx].classList.add('active');
+    }
+    drawLine();
+    e.preventDefault();
+  }
+  function end(){
+    if(!dragging) return;
+    dragging = false;
+    if(path.length >= 4){
+      const finalPath = path.slice();
+      onComplete(finalPath.join('-'), reset);
+    } else {
+      toast('Connect at least 4 dots');
+      setTimeout(reset, 400);
+    }
+  }
+  container.addEventListener('mousedown', start);
+  container.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  container.addEventListener('touchstart', start, {passive:false});
+  container.addEventListener('touchmove', move, {passive:false});
+  container.addEventListener('touchend', end);
+
+  return { reset };
+}
+
+/* ============ CREATE ROOM FLOW ============ */
+let createMethod = 'pin';
+let createFirstEntry = null; // stores first PIN/pattern for confirm step
+
+function resetCreateFlow(){
+  createFirstEntry = null;
+  $('createStepLabel').textContent = createMethod === 'pin' ? 'Set a 4-digit PIN' : 'Draw a pattern (4+ dots)';
+  $('createRestartBtn').classList.add('hidden');
+  $('gateErr').textContent = '';
+  if(createMethod === 'pin'){
+    $('createPinBlock').classList.remove('hidden');
+    $('createPatternBlock').classList.add('hidden');
+    initCreatePin();
+  } else {
+    $('createPatternBlock').classList.remove('hidden');
+    $('createPinBlock').classList.add('hidden');
+    initCreatePattern();
+  }
+}
+
+function initCreatePin(){
+  buildKeypad($('createKeypad'), $('createPinDots'), 4, async (val, clear) => {
+    if(!createFirstEntry){
+      createFirstEntry = val;
+      $('createStepLabel').textContent = 'Confirm your PIN';
+      $('createRestartBtn').classList.remove('hidden');
+      clear();
+    } else {
+      if(val !== createFirstEntry){
+        $('gateErr').textContent = "PINs didn't match. Try again.";
+        createFirstEntry = null;
+        $('createStepLabel').textContent = 'Set a 4-digit PIN';
+        $('createRestartBtn').classList.add('hidden');
+        clear();
+        return;
+      }
+      await finalizeRoomCreation(val);
+    }
+  });
+}
+function initCreatePattern(){
+  buildPatternGrid($('createPatternGrid'), async (val, clear) => {
+    if(!createFirstEntry){
+      createFirstEntry = val;
+      $('createStepLabel').textContent = 'Draw the same pattern again';
+      $('createRestartBtn').classList.remove('hidden');
+      clear();
+    } else {
+      if(val !== createFirstEntry){
+        $('gateErr').textContent = "Patterns didn't match. Try again.";
+        createFirstEntry = null;
+        $('createStepLabel').textContent = 'Draw a pattern (4+ dots)';
+        $('createRestartBtn').classList.add('hidden');
+        clear();
+        return;
+      }
+      await finalizeRoomCreation(val);
+    }
+  });
+}
+
+async function finalizeRoomCreation(secret){
+  $('gateErr').textContent = '';
+  try{
+    const code = genRoomCode();
+    const hash = await sha256(secret);
+    const { error } = await supabase.from('rooms').insert({ id: code, password_hash: hash, method: createMethod });
+    if(error) throw error;
+    enterRoom(code, hash);
+  }catch(e){
+    $('gateErr').textContent = 'Could not create room. ' + (e.message||'');
+    resetCreateFlow();
+  }
+}
+
+$('createMethodPin').onclick = () => {
+  createMethod = 'pin';
+  $('createMethodPin').classList.add('active');
+  $('createMethodPattern').classList.remove('active');
+  resetCreateFlow();
+};
+$('createMethodPattern').onclick = () => {
+  createMethod = 'pattern';
+  $('createMethodPattern').classList.add('active');
+  $('createMethodPin').classList.remove('active');
+  resetCreateFlow();
+};
+$('createRestartBtn').onclick = resetCreateFlow;
+
+/* ============ JOIN ROOM FLOW ============ */
+let joinRoomCode = null;
+let joinRoomHash = null;
+let joinRoomMethod = null;
+
+$('joinCodeBtn').onclick = async () => {
+  const code = $('joinCode').value.trim();
+  if(!/^\d{6}$/.test(code)){ $('gateErr').textContent = 'Enter the 6-digit code.'; return; }
+  $('gateErr').textContent = '';
+  $('joinCodeBtn').disabled = true;
+  try{
+    const { data, error } = await supabase.from('rooms').select('*').eq('id', code).single();
+    if(error || !data){ $('gateErr').textContent = 'Room not found.'; return; }
+    joinRoomCode = code;
+    joinRoomHash = data.password_hash;
+    joinRoomMethod = data.method || 'pin';
+    $('joinCodeStep').classList.add('hidden');
+    $('joinPassStep').classList.remove('hidden');
+    $('joinStepLabel').textContent = joinRoomMethod === 'pin' ? 'Enter the 4-digit PIN' : 'Draw the pattern';
+    if(joinRoomMethod === 'pin'){
+      $('joinPinBlock').classList.remove('hidden');
+      $('joinPatternBlock').classList.add('hidden');
+      buildKeypad($('joinKeypad'), $('joinPinDots'), 4, async (val, clear) => {
+        await tryJoinPassword(val, clear);
+      });
+    } else {
+      $('joinPatternBlock').classList.remove('hidden');
+      $('joinPinBlock').classList.add('hidden');
+      buildPatternGrid($('joinPatternGrid'), async (val, clear) => {
+        await tryJoinPassword(val, clear);
+      });
+    }
+  }catch(e){
+    $('gateErr').textContent = 'Something went wrong.';
+  }finally{
+    $('joinCodeBtn').disabled = false;
+  }
+};
+
+async function tryJoinPassword(secret, clear){
+  const hash = await sha256(secret);
+  if(hash === joinRoomHash){
+    enterRoom(joinRoomCode, hash);
+  } else {
+    $('gateErr').textContent = 'Incorrect. Try again.';
+    clear();
+  }
+}
+
+$('joinBackBtn').onclick = () => {
+  $('joinPassStep').classList.add('hidden');
+  $('joinCodeStep').classList.remove('hidden');
+  $('gateErr').textContent = '';
+};
+
+/* ---- tabs (create vs join) ---- */
+$('tabCreate').onclick = () => {
+  $('tabCreate').classList.add('active'); $('tabJoin').classList.remove('active');
+  $('createForm').style.display='block'; $('joinForm').style.display='none';
+  $('gateErr').textContent='';
+};
+$('tabJoin').onclick = () => {
+  $('tabJoin').classList.add('active'); $('tabCreate').classList.remove('active');
+  $('joinForm').style.display='block'; $('createForm').style.display='none';
+  $('gateErr').textContent='';
+};
+
+/* ============ ROOM ============ */
+function enterRoom(code, hash){
+  currentRoom = code; currentPassHash = hash;
+  sessionStorage.setItem('dv_room', code);
+  sessionStorage.setItem('dv_hash', hash);
+  $('gate').style.display='none';
+  $('room').style.display='flex';
+  $('roomCodeLabel').textContent = code;
+  loadFeed();
+  subscribeFeed();
+}
+
+$('leaveBtn').onclick = () => {
+  sessionStorage.removeItem('dv_room');
+  sessionStorage.removeItem('dv_hash');
+  if(channel) supabase.removeChannel(channel);
+  location.reload();
+};
+
+window.addEventListener('load', () => {
+  const r = sessionStorage.getItem('dv_room');
+  const h = sessionStorage.getItem('dv_hash');
+  if(r && h){ enterRoom(r, h); }
+  else { resetCreateFlow(); }
+});
+
+/* ---- file selection ---- */
+let pendingFile = null;
+$('fileTrigger').onclick = () => $('fileInput').click();
+$('fileInput').onchange = (e) => {
+  pendingFile = e.target.files[0] || null;
+  $('fileName').style.display = pendingFile ? 'block' : 'none';
+  $('fileName').textContent = pendingFile ? ('Attached: ' + pendingFile.name) : '';
+};
+
+/* ---- send ---- */
+$('sendBtn').onclick = async () => {
+  const text = $('textInput').value.trim();
+  if(!text && !pendingFile){ toast('Nothing to send'); return; }
+  $('sendBtn').disabled = true;
+  try{
+    if(pendingFile){
+      const path = `${currentRoom}/${Date.now()}_${pendingFile.name}`;
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, pendingFile);
+      if(upErr) throw upErr;
+      await supabase.from('items').insert({
+        room_id: currentRoom, type: 'file',
+        file_path: path, file_name: pendingFile.name, file_size: pendingFile.size,
+        content: text || null
+      });
+      pendingFile = null; $('fileInput').value=''; $('fileName').style.display='none';
+    } else {
+      await supabase.from('items').insert({ room_id: currentRoom, type: 'text', content: text });
+    }
+    $('textInput').value = '';
+  }catch(e){
+    toast('Send failed: ' + (e.message||'error'));
+  }finally{
+    $('sendBtn').disabled = false;
+  }
+};
+
+/* ---- feed ---- */
+function fmtSize(bytes){
+  if(bytes < 1024) return bytes + ' B';
+  if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+function fmtTime(ts){
+  const d = new Date(ts);
+  return d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+function escapeHtml(s){
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+}
+function renderItem(item){
+  const wrap = document.createElement('div');
+  if(item.type === 'file'){
+    wrap.className = 'glass item file';
+    const url = supabase.storage.from(BUCKET).getPublicUrl(item.file_path).data.publicUrl;
+    wrap.innerHTML = `
+      <div class="file-icon">📄</div>
+      <div class="file-info">
+        <div class="meta"><span>${fmtTime(item.created_at)}</span></div>
+        <div class="fname">${item.file_name}</div>
+        <div class="fsize">${fmtSize(item.file_size||0)}</div>
+      </div>
+      <a class="dl" href="${url}" target="_blank" rel="noopener">Download</a>
+    `;
+  } else {
+    wrap.className = 'glass item text';
+    wrap.innerHTML = `<div class="meta"><span>${fmtTime(item.created_at)}</span></div>${escapeHtml(item.content)}`;
+  }
+  return wrap;
+}
+
+async function loadFeed(){
+  const { data, error } = await supabase
+    .from('items').select('*').eq('room_id', currentRoom)
+    .order('created_at', { ascending: false });
+  const feed = $('feed');
+  feed.innerHTML = '';
+  if(error || !data || data.length === 0){
+    feed.innerHTML = '<div class="empty">Nothing shared yet. Send some text or a file above.</div>';
+    return;
+  }
+  data.forEach(item => feed.appendChild(renderItem(item)));
+}
+
+function subscribeFeed(){
+  channel = supabase.channel('room-' + currentRoom)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'items', filter: `room_id=eq.${currentRoom}` },
+      payload => {
+        const feed = $('feed');
+        const empty = feed.querySelector('.empty');
+        if(empty) empty.remove();
+        feed.prepend(renderItem(payload.new));
+      })
+    .subscribe();
+}
+</script>
+</body>
+</html>
